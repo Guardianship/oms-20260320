@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>运维管理系统</title>
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <!-- 自定义样式 -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+            background: #f0f2f5;
+        }
+        #app {
+            min-height: 100vh;
+        }
+        /* 登录页样式 */
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .login-card {
+            width: 400px;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .login-title {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 24px;
+            color: #303133;
+        }
+        /* 主页面样式 */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .header h1 {
+            font-size: 22px;
+            font-weight: 500;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .main-content {
+            padding: 20px 40px;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .status-good {
+            color: #67c23a;
+        }
+        .status-warning {
+            color: #e6a23c;
+        }
+        .status-danger {
+            color: #f56c6c;
+        }
+        .metric-card {
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            width: 100%;
+            height: 350px;
+        }
+        .server-card {
+            margin-bottom: 15px;
+        }
+        .server-card .el-card__header {
+            background: #fafafa;
+        }
+        .refresh-info {
+            color: #909399;
+            font-size: 13px;
+        }
+        .download-template {
+            font-size: 12px;
+            color: #409EFF;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .download-template:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 登录页面 -->
+        <div v-if="!isLoggedIn" class="login-container">
+            <el-card class="login-card">
+                <div class="login-title">🔧 运维管理系统</div>
+                <el-form :model="loginForm" :rules="loginRules" ref="loginFormRef" label-width="80px">
+                    <el-form-item label="用户名" prop="username">
+                        <el-input v-model="loginForm.username" placeholder="请输入用户名" @keyup.enter="handleLogin" />
+                    </el-form-item>
+                    <el-form-item label="密码" prop="password">
+                        <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" show-password @keyup.enter="handleLogin" />
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button type="primary" style="width: 100%" @click="handleLogin" :loading="loginLoading">
+                            登 录
+                        </el-button>
+                    </el-form-item>
+                </el-form>
+            </el-card>
+        </div>
+
+        <!-- 主页面 -->
+        <div v-else>
+            <!-- 头部 -->
+            <div class="header">
+                <h1>🔧 运维管理系统</h1>
+                <div class="header-right">
+                    <span>欢迎, {{ currentUser }}</span>
+                    <el-button type="info" size="small" @click="showChangePassword">修改密码</el-button>
+                    <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
+                </div>
+            </div>
+
+            <div class="main-content">
+                <!-- 标签页 -->
+                <el-tabs v-model="activeTab" type="border-card">
+                    <!-- 实时监控 -->
+                    <el-tab-pane label="实时监控" name="monitor">
+                        <div class="card-header">
+                            <div>
+                                <el-button type="primary" @click="refreshAll" :loading="loading">
+                                    <el-icon><refresh /></el-icon> 刷新数据
+                                </el-button>
+                                <el-button type="success" @click="exportExcel">
+                                    <el-icon><download /></el-icon> 导出Excel
+                                </el-button>
+                                <span class="refresh-info" style="margin-left: 15px;">
+                                    自动刷新: {{ autoRefresh ? '开启 (30秒)' : '关闭' }}
+                                </span>
+                            </div>
+                            <div>
+                                <el-radio-group v-model="monitorView">
+                                    <el-radio-button value="card">卡片视图</el-radio-button>
+                                    <el-radio-button value="list">列表视图</el-radio-button>
+                                </el-radio-group>
+                                <el-switch v-model="autoRefresh" active-text="自动刷新" style="margin-left: 15px;" />
+                            </div>
+                        </div>
+                        <div v-if="lastRefresh" class="refresh-info" style="margin-bottom: 15px;">
+                            最后更新: {{ lastRefresh }}
+                        </div>
+
+                        <!-- 卡片视图 -->
+                        <div v-if="monitorView === 'card'">
+                            <el-row :gutter="20">
+                                <el-col :xs="24" :sm="12" :lg="8" v-for="server in monitorData" :key="server.server_id">
+                                    <div class="server-card">
+                                        <el-card :shadow="'hover'">
+                                            <template #header>
+                                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                    <span style="font-weight: bold;">{{ server.server_name }}</span>
+                                                    <el-tag v-if="server.success" type="success" size="small">在线</el-tag>
+                                                    <el-tag v-else type="danger" size="small">离线</el-tag>
+                                                </div>
+                                            </template>
+                                            <div v-if="server.success">
+                                                <div style="margin-bottom: 15px;">
+                                                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                                        <span>CPU 使用率</span>
+                                                        <span :class="getStatusClass(server.cpu_percent)">
+                                                            {{ server.cpu_percent }}%
+                                                        </span>
+                                                    </div>
+                                                    <el-progress :percentage="server.cpu_percent" :color="getProgressColor(server.cpu_percent)" :stroke-width="12" />
+                                                </div>
+                                                <div style="margin-bottom: 15px;">
+                                                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                                        <span>内存使用率</span>
+                                                        <span :class="getStatusClass(server.memory_percent)">
+                                                            {{ server.memory_percent }}%
+                                                        </span>
+                                                    </div>
+                                                    <el-progress :percentage="server.memory_percent" :color="getProgressColor(server.memory_percent)" :stroke-width="12" />
+                                                    <div style="font-size: 12px; color: #909399; margin-top: 5px;">
+                                                        {{ server.memory_used }}GB / {{ server.memory_total }}GB
+                                                    </div>
+                                                </div>
+                                                <div style="margin-bottom: 10px;">
+                                                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                                        <span>磁盘使用率</span>
+                                                        <span :class="getStatusClass(server.disk_percent)">
+                                                            {{ server.disk_percent }}%
+                                                        </span>
+                                                    </div>
+                                                    <el-progress :percentage="server.disk_percent" :color="getProgressColor(server.disk_percent)" :stroke-width="12" />
+                                                    <div style="font-size: 12px; color: #909399; margin-top: 5px;">
+                                                        {{ server.disk_used }}GB / {{ server.disk_total }}GB
+                                                    </div>
+                                                </div>
+                                                <el-button type="primary" size="small" @click="showHistory(server)" style="width: 100%; margin-top: 10px;">
+                                                    <el-icon><data-line /></el-icon> 查看历史数据
+                                                </el-button>
+                                            </div>
+                                            <div v-else style="color: #f56c6c; text-align: center; padding: 20px;">
+                                                <el-icon style="font-size: 40px;"><warning /></el-icon>
+                                                <div style="margin-top: 10px;">{{ server.error || '获取数据失败' }}</div>
+                                            </div>
+                                        </el-card>
+                                    </div>
+                                </el-col>
+                            </el-row>
+                        </div>
+
+                        <!-- 列表视图 -->
+                        <div v-else>
+                            <el-table :data="monitorData" style="width: 100%" border>
+                                <el-table-column prop="server_name" label="服务器名称" width="180" fixed="left" />
+                                <el-table-column label="状态" width="100">
+                                    <template #default="scope">
+                                        <el-tag v-if="scope.row.success" type="success" size="small">在线</el-tag>
+                                        <el-tag v-else type="danger" size="small">离线</el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="cpu_percent" label="CPU使用率" width="120">
+                                    <template #default="scope">
+                                        <span v-if="scope.row.success" :class="getStatusClass(scope.row.cpu_percent)">
+                                            {{ scope.row.cpu_percent }}%
+                                        </span>
+                                        <span v-else style="color: #909399;">-</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="memory_percent" label="内存使用率" width="120">
+                                    <template #default="scope">
+                                        <span v-if="scope.row.success" :class="getStatusClass(scope.row.memory_percent)">
+                                            {{ scope.row.memory_percent }}%
+                                        </span>
+                                        <span v-else style="color: #909399;">-</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="disk_percent" label="磁盘使用率" width="120">
+                                    <template #default="scope">
+                                        <span v-if="scope.row.success" :class="getStatusClass(scope.row.disk_percent)">
+                                            {{ scope.row.disk_percent }}%
+                                        </span>
+                                        <span v-else style="color: #909399;">-</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="memory_total" label="内存总量(GB)" width="130">
+                                    <template #default="scope">
+                                        {{ scope.row.success ? scope.row.memory_total : '-' }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="memory_used" label="内存已用(GB)" width="130">
+                                    <template #default="scope">
+                                        {{ scope.row.success ? scope.row.memory_used : '-' }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="disk_total" label="磁盘总量(GB)" width="130">
+                                    <template #default="scope">
+                                        {{ scope.row.success ? scope.row.disk_total : '-' }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="disk_used" label="磁盘已用(GB)" width="130">
+                                    <template #default="scope">
+                                        {{ scope.row.success ? scope.row.disk_used : '-' }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="操作" width="200" fixed="right">
+                                    <template #default="scope">
+                                        <el-button v-if="scope.row.success" type="primary" size="small" @click="showHistory(scope.row)">
+                                            历史数据
+                                        </el-button>
+                                        <el-button v-if="scope.row.server_id !== 0" type="danger" size="small" @click="confirmDeleteServer(scope.row)">
+                                            删除
+                                        </el-button>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </div>
+                    </el-tab-pane>
+
+                    <!-- 服务器管理 -->
+                    <el-tab-pane label="服务器管理" name="servers">
+                        <div class="card-header">
+                            <span style="font-size: 16px; font-weight: bold;">已添加的Linux服务器</span>
+                            <div>
+                                <el-button type="success" @click="showImportDialog">
+                                    <el-icon><upload /></el-icon> 批量导入
+                                </el-button>
+                                <el-button type="primary" @click="showAddDialog">
+                                    <el-icon><plus /></el-icon> 添加服务器
+                                </el-button>
+                            </div>
+                        </div>
+
+                        <el-table :data="servers" style="width: 100%" v-loading="serverLoading">
+                            <el-table-column prop="name" label="服务器名称" width="180" />
+                            <el-table-column prop="host" label="主机地址" width="180" />
+                            <el-table-column prop="port" label="SSH端口" width="100" />
+                            <el-table-column prop="username" label="用户名" width="120" />
+                            <el-table-column prop="created_at" label="添加时间" width="180">
+                                <template #default="scope">
+                                    {{ formatDate(scope.row.created_at) }}
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" width="200" fixed="right">
+                                <template #default="scope">
+                                    <el-button type="primary" size="small" @click="showEditDialog(scope.row)">编辑</el-button>
+                                    <el-button type="danger" size="small" @click="confirmDelete(scope.row)">删除</el-button>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </el-tab-pane>
+                </el-tabs>
+            </div>
+
+            <!-- 添加/编辑服务器对话框 -->
+            <el-dialog v-model="serverDialogVisible" :title="isEdit ? '编辑服务器' : '添加服务器'" width="500px">
+                <el-form :model="serverForm" :rules="serverRules" ref="serverFormRef" label-width="100px">
+                    <el-form-item label="服务器名称" prop="name">
+                        <el-input v-model="serverForm.name" placeholder="例如: 测试服务器1" />
+                    </el-form-item>
+                    <el-form-item label="主机地址" prop="host">
+                        <el-input v-model="serverForm.host" placeholder="例如: 192.168.1.100" />
+                    </el-form-item>
+                    <el-form-item label="SSH端口" prop="port">
+                        <el-input-number v-model="serverForm.port" :min="1" :max="65535" style="width: 100%;" />
+                    </el-form-item>
+                    <el-form-item label="用户名" prop="username">
+                        <el-input v-model="serverForm.username" placeholder="SSH用户名" />
+                    </el-form-item>
+                    <el-form-item label="密码" prop="password">
+                        <el-input v-model="serverForm.password" type="password" placeholder="SSH密码" show-password />
+                    </el-form-item>
+                </el-form>
+                <template #footer>
+                    <el-button @click="serverDialogVisible = false">取消</el-button>
+                    <el-button type="primary" @click="saveServer" :loading="saving">保存</el-button>
+                </template>
+            </el-dialog>
+
+            <!-- 批量导入对话框 -->
+            <el-dialog v-model="importDialogVisible" title="批量导入服务器" width="500px">
+                <el-upload
+                    ref="uploadRef"
+                    :auto-upload="false"
+                    :limit="1"
+                    :on-change="handleFileChange"
+                    :show-file-list="false"
+                    accept=".csv"
+                >
+                    <el-button type="primary">选择CSV文件</el-button>
+                    <template #tip>
+                        <div class="el-upload__tip">
+                            请选择CSV格式文件
+                        </div>
+                    </template>
+                </el-upload>
+                <div v-if="selectedFile" style="margin-top: 15px; padding: 10px; background: #f5f7fa; border-radius: 4px;">
+                    <el-icon style="color: #67c23a; margin-right: 8px;"><success-filled /></el-icon>
+                    {{ selectedFile.name }}
+                </div>
+                <div class="download-template" @click="downloadTemplate">
+                    <el-icon><document /></el-icon> 下载CSV导入模板
+                </div>
+                <template #footer>
+                    <el-button @click="importDialogVisible = false">取消</el-button>
+                    <el-button type="primary" @click="handleImport" :loading="importLoading" :disabled="!selectedFile">
+                        导入
+                    </el-button>
+                </template>
+            </el-dialog>
+
+            <!-- 修改密码对话框 -->
+            <el-dialog v-model="passwordDialogVisible" title="修改密码" width="400px">
+                <el-form :model="passwordForm" :rules="passwordRules" ref="passwordFormRef" label-width="80px">
+                    <el-form-item label="原密码" prop="old_password">
+                        <el-input v-model="passwordForm.old_password" type="password" show-password />
+                    </el-form-item>
+                    <el-form-item label="新密码" prop="new_password">
+                        <el-input v-model="passwordForm.new_password" type="password" show-password />
+                    </el-form-item>
+                    <el-form-item label="确认密码" prop="confirm_password">
+                        <el-input v-model="passwordForm.confirm_password" type="password" show-password />
+                    </el-form-item>
+                </el-form>
+                <template #footer>
+                    <el-button @click="passwordDialogVisible = false">取消</el-button>
+                    <el-button type="primary" @click="handleChangePassword" :loading="passwordLoading">确定</el-button>
+                </template>
+            </el-dialog>
+
+            <!-- 历史数据图表对话框 -->
+            <el-dialog v-model="historyDialogVisible" :title="historyServerName + ' - 历史数据'" width="900px">
+                <div style="margin-bottom: 15px;">
+                    <el-radio-group v-model="historyDays" @change="loadHistoryData">
+                        <el-radio-button :value="1">最近1天</el-radio-button>
+                        <el-radio-button :value="3">最近3天</el-radio-button>
+                        <el-radio-button :value="7">最近7天</el-radio-button>
+                    </el-radio-group>
+                </div>
+                <div ref="chartRef" class="chart-container"></div>
+                <template #footer>
+                    <el-button @click="historyDialogVisible = false">关闭</el-button>
+                </template>
+            </el-dialog>
+        </div>
+    </div>
+
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Element Plus -->
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Element Plus Icons -->
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <!-- ECharts -->
+    <script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+
+    <script>
+        const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
+
+        // API 调用辅助函数
+        const api = {
+            token: localStorage.getItem('oms_token'),
+
+            setToken(token) {
+                this.token = token;
+                localStorage.setItem('oms_token', token);
+            },
+
+            clearToken() {
+                this.token = null;
+                localStorage.removeItem('oms_token');
+            },
+
+            async request(url, options = {}) {
+                const headers = {
+                    ...options.headers
+                };
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+                const res = await fetch(url, {
+                    ...options,
+                    headers
+                });
+                if (res.status === 401) {
+                    api.clearToken();
+                    window.location.reload();
+                    throw new Error('登录已过期，请重新登录');
+                }
+                return res;
+            },
+
+            async get(url) {
+                return this.request(url, { method: 'GET' });
+            },
+
+            async post(url, data) {
+                const headers = { 'Content-Type': 'application/json' };
+                return this.request(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(data)
+                });
+            },
+
+            async put(url, data) {
+                const headers = { 'Content-Type': 'application/json' };
+                return this.request(url, {
+                    method: 'PUT',
+                    headers,
+                    body: JSON.stringify(data)
+                });
+            },
+
+            async delete(url) {
+                return this.request(url, { method: 'DELETE' });
+            },
+
+            async upload(url, formData) {
+                const headers = {};
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+                return fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: formData
+                });
+            }
+        };
+
+        const app = createApp({
+            setup() {
+                // ===== 认证相关 =====
+                const isLoggedIn = ref(!!api.token);
+                const currentUser = ref('');
+                const loginForm = ref({ username: '', password: '' });
+                const loginLoading = ref(false);
+                const loginFormRef = ref(null);
+                const loginRules = {
+                    username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+                    password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+                };
+
+                const passwordDialogVisible = ref(false);
+                const passwordForm = ref({ old_password: '', new_password: '', confirm_password: '' });
+                const passwordLoading = ref(false);
+                const passwordFormRef = ref(null);
+                const validateConfirmPassword = (rule, value, callback) => {
+                    if (value !== passwordForm.value.new_password) {
+                        callback(new Error('两次输入的密码不一致'));
+                    } else {
+                        callback();
+                    }
+                };
+                const passwordRules = {
+                    old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+                    new_password: [{ required: true, message: '请输入新密码', trigger: 'blur' },
+                                   { min: 6, message: '密码至少6位', trigger: 'blur' }],
+                    confirm_password: [{ required: true, validator: validateConfirmPassword, trigger: 'blur' }]
+                };
+
+                const handleLogin = async () => {
+                    if (!loginFormRef.value) return;
+                    await loginFormRef.value.validate(async (valid) => {
+                        if (valid) {
+                            loginLoading.value = true;
+                            try {
+                                const formData = new FormData();
+                                formData.append('username', loginForm.value.username);
+                                formData.append('password', loginForm.value.password);
+                                const res = await fetch('/api/login', { method: 'POST', body: formData });
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    api.setToken(data.access_token);
+                                    currentUser.value = loginForm.value.username;
+                                    isLoggedIn.value = true;
+                                    ElementPlus.ElMessage.success('登录成功');
+                                    initAfterLogin();
+                                } else {
+                                    ElementPlus.ElMessage.error('用户名或密码错误');
+                                }
+                            } catch (e) {
+                                ElementPlus.ElMessage.error('登录失败: ' + e.message);
+                            }
+                            loginLoading.value = false;
+                        }
+                    });
+                };
+
+                const handleLogout = () => {
+                    api.clearToken();
+                    isLoggedIn.value = false;
+                    currentUser.value = '';
+                    loginForm.value = { username: '', password: '' };
+                };
+
+                const showChangePassword = () => {
+                    passwordForm.value = { old_password: '', new_password: '', confirm_password: '' };
+                    passwordDialogVisible.value = true;
+                };
+
+                const handleChangePassword = async () => {
+                    if (!passwordFormRef.value) return;
+                    await passwordFormRef.value.validate(async (valid) => {
+                        if (valid) {
+                            passwordLoading.value = true;
+                            try {
+                                const res = await api.post('/api/user/change-password', {
+                                    old_password: passwordForm.value.old_password,
+                                    new_password: passwordForm.value.new_password
+                                });
+                                if (res.ok) {
+                                    ElementPlus.ElMessage.success('密码修改成功');
+                                    passwordDialogVisible.value = false;
+                                } else {
+                                    const data = await res.json();
+                                    ElementPlus.ElMessage.error(data.detail || '修改失败');
+                                }
+                            } catch (e) {
+                                ElementPlus.ElMessage.error('修改失败: ' + e.message);
+                            }
+                            passwordLoading.value = false;
+                        }
+                    });
+                };
+
+                // ===== 主功能 =====
+                const activeTab = ref('monitor');
+                const monitorView = ref('card');
+                const loading = ref(false);
+                const serverLoading = ref(false);
+                const monitorData = ref([]);
+                const servers = ref([]);
+                const lastRefresh = ref('');
+                const autoRefresh = ref(true);
+                let autoRefreshTimer = null;
+
+                // 服务器表单
+                const serverDialogVisible = ref(false);
+                const isEdit = ref(false);
+                const serverFormRef = ref(null);
+                const saving = ref(false);
+                const serverForm = ref({
+                    id: null,
+                    name: '',
+                    host: '',
+                    port: 22,
+                    username: '',
+                    password: ''
+                });
+                const serverRules = {
+                    name: [{ required: true, message: '请输入服务器名称', trigger: 'blur' }],
+                    host: [{ required: true, message: '请输入主机地址', trigger: 'blur' }],
+                    username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+                    password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+                };
+
+                // 批量导入
+                const importDialogVisible = ref(false);
+                const importLoading = ref(false);
+                const selectedFile = ref(null);
+                const uploadRef = ref(null);
+
+                // 历史数据
+                const historyDialogVisible = ref(false);
+                const historyServerId = ref(0);
+                const historyServerName = ref('');
+                const historyDays = ref(7);
+                const chartRef = ref(null);
+                let chart = null;
+
+                // 获取状态样式类
+                const getStatusClass = (percent) => {
+                    if (percent === null || percent === undefined) return '';
+                    if (percent < 60) return 'status-good';
+                    if (percent < 80) return 'status-warning';
+                    return 'status-danger';
+                };
+
+                // 获取进度条颜色
+                const getProgressColor = (percent) => {
+                    if (percent < 60) return '#67c23a';
+                    if (percent < 80) return '#e6a23c';
+                    return '#f56c6c';
+                };
+
+                // 格式化日期
+                const formatDate = (dateStr) => {
+                    if (!dateStr) return '';
+                    const d = new Date(dateStr);
+                    return d.toLocaleString('zh-CN');
+                };
+
+                // 刷新所有监控数据
+                const refreshAll = async () => {
+                    loading.value = true;
+                    try {
+                        const res = await api.get('/api/monitor/all');
+                        const data = await res.json();
+                        if (data.success) {
+                            monitorData.value = data.data;
+                        }
+                        lastRefresh.value = new Date().toLocaleString('zh-CN');
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('获取数据失败: ' + e.message);
+                    }
+                    loading.value = false;
+                };
+
+                // 获取服务器列表
+                const loadServers = async () => {
+                    serverLoading.value = true;
+                    try {
+                        const res = await api.get('/api/servers');
+                        servers.value = await res.json();
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('获取服务器列表失败');
+                    }
+                    serverLoading.value = false;
+                };
+
+                // 显示添加服务器对话框
+                const showAddDialog = () => {
+                    isEdit.value = false;
+                    serverForm.value = { id: null, name: '', host: '', port: 22, username: '', password: '' };
+                    serverDialogVisible.value = true;
+                };
+
+                // 显示编辑服务器对话框
+                const showEditDialog = (row) => {
+                    isEdit.value = true;
+                    serverForm.value = { ...row, password: '' };
+                    serverDialogVisible.value = true;
+                };
+
+                // 保存服务器
+                const saveServer = async () => {
+                    if (!serverFormRef.value) return;
+                    await serverFormRef.value.validate(async (valid) => {
+                        if (valid) {
+                            saving.value = true;
+                            try {
+                                const url = isEdit.value ? `/api/servers/${serverForm.value.id}` : '/api/servers';
+                                const method = isEdit.value ? api.put : api.post;
+                                const res = await method(url, serverForm.value);
+                                if (res.ok) {
+                                    ElementPlus.ElMessage.success(isEdit.value ? '更新成功' : '添加成功');
+                                    serverDialogVisible.value = false;
+                                    loadServers();
+                                } else {
+                                    ElementPlus.ElMessage.error('保存失败');
+                                }
+                            } catch (e) {
+                                ElementPlus.ElMessage.error('保存失败: ' + e.message);
+                            }
+                            saving.value = false;
+                        }
+                    });
+                };
+
+                // 确认删除（从服务器管理页）
+                const confirmDelete = (row) => {
+                    ElementPlus.ElMessageBox.confirm(
+                        `确定要删除服务器 "${row.name}" 吗？`,
+                        '提示',
+                        { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+                    ).then(async () => {
+                        try {
+                            const res = await api.delete(`/api/servers/${row.id}`);
+                            if (res.ok) {
+                                ElementPlus.ElMessage.success('删除成功');
+                                loadServers();
+                            }
+                        } catch (e) {
+                            ElementPlus.ElMessage.error('删除失败');
+                        }
+                    }).catch(() => {});
+                };
+
+                // 确认删除服务器（从监控列表）
+                const confirmDeleteServer = (row) => {
+                    ElementPlus.ElMessageBox.confirm(
+                        `确定要删除服务器 "${row.server_name}" 吗？`,
+                        '提示',
+                        { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+                    ).then(async () => {
+                        try {
+                            const res = await api.delete(`/api/servers/${row.server_id}`);
+                            if (res.ok) {
+                                ElementPlus.ElMessage.success('删除成功');
+                                refreshAll();
+                            }
+                        } catch (e) {
+                            ElementPlus.ElMessage.error('删除失败');
+                        }
+                    }).catch(() => {});
+                };
+
+                // ===== 批量导入相关 =====
+                const showImportDialog = () => {
+                    selectedFile.value = null;
+                    importDialogVisible.value = true;
+                };
+
+                const handleFileChange = (file) => {
+                    selectedFile.value = file.raw;
+                };
+
+                const downloadTemplate = () => {
+                    const csvContent = 'name,host,port,username,password\n测试服务器1,192.168.1.100,22,root,password123\n测试服务器2,192.168.1.101,22,root,password456';
+                    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = '服务器导入模板.csv';
+                    link.click();
+                };
+
+                const handleImport = async () => {
+                    if (!selectedFile.value) return;
+                    importLoading.value = true;
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', selectedFile.value);
+                        const res = await api.upload('/api/servers/import', formData);
+                        if (res.ok) {
+                            const data = await res.json();
+                            ElementPlus.ElMessage.success(`导入成功: ${data.imported}条`);
+                            importDialogVisible.value = false;
+                            loadServers();
+                        } else {
+                            const data = await res.json();
+                            let errorMsg = data.detail?.message || '导入失败';
+                            if (data.detail?.errors) {
+                                errorMsg += '\n' + data.detail.errors.slice(0, 5).join('\n');
+                                if (data.detail.errors.length > 5) {
+                                    errorMsg += `\n...还有${data.detail.errors.length - 5}条错误`;
+                                }
+                            }
+                            ElementPlus.ElMessage.error(errorMsg);
+                        }
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('导入失败: ' + e.message);
+                    }
+                    importLoading.value = false;
+                };
+
+                // ===== 导出Excel =====
+                const exportExcel = async () => {
+                    try {
+                        const res = await api.get('/api/metrics/export/excel');
+                        const blob = await res.blob();
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || '服务器监控数据.xlsx';
+                        link.download = filename;
+                        link.click();
+                        ElementPlus.ElMessage.success('导出成功');
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('导出失败: ' + e.message);
+                    }
+                };
+
+                // ===== 历史数据图表 =====
+                const showHistory = (server) => {
+                    historyServerId.value = server.server_id;
+                    historyServerName.value = server.server_name;
+                    historyDays.value = 7;
+                    historyDialogVisible.value = true;
+                    nextTick(() => {
+                        loadHistoryData();
+                    });
+                };
+
+                const loadHistoryData = async () => {
+                    try {
+                        const res = await api.get(`/api/metrics/history/${historyServerId.value}?days=${historyDays.value}`);
+                        const data = await res.json();
+                        if (data.success) {
+                            renderChart(data.data);
+                        }
+                    } catch (e) {
+                        ElementPlus.ElMessage.error('加载历史数据失败');
+                    }
+                };
+
+                const renderChart = (data) => {
+                    if (!chartRef.value) return;
+                    if (!chart) {
+                        chart = echarts.init(chartRef.value);
+                    }
+                    const option = {
+                        tooltip: { trigger: 'axis' },
+                        legend: { data: ['CPU', '内存', '磁盘'] },
+                        grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+                        xAxis: { type: 'category', boundaryGap: false, data: data.times },
+                        yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: '{value}%' } },
+                        series: [
+                            { name: 'CPU', type: 'line', smooth: true, data: data.cpu, itemStyle: { color: '#409EFF' } },
+                            { name: '内存', type: 'line', smooth: true, data: data.memory, itemStyle: { color: '#67C23A' } },
+                            { name: '磁盘', type: 'line', smooth: true, data: data.disk, itemStyle: { color: '#E6A23C' } }
+                        ]
+                    };
+                    chart.setOption(option);
+                };
+
+                // 切换标签时刷新
+                const handleTabChange = (tabName) => {
+                    if (tabName === 'servers') {
+                        loadServers();
+                    }
+                };
+
+                // 登录后初始化
+                const initAfterLogin = () => {
+                    refreshAll();
+                    // 自动刷新
+                    autoRefreshTimer = setInterval(() => {
+                        if (autoRefresh.value && activeTab.value === 'monitor') {
+                            refreshAll();
+                        }
+                    }, 30000);
+                };
+
+                onMounted(() => {
+                    // 如果已登录，初始化
+                    if (isLoggedIn.value) {
+                        api.get('/api/user/me').then(res => {
+                            if (res.ok) {
+                                res.json().then(user => {
+                                    currentUser.value = user.username;
+                                    initAfterLogin();
+                                });
+                            }
+                        });
+                    }
+                });
+
+                onUnmounted(() => {
+                    if (autoRefreshTimer) {
+                        clearInterval(autoRefreshTimer);
+                    }
+                    if (chart) {
+                        chart.dispose();
+                    }
+                });
+
+                return {
+                    isLoggedIn,
+                    currentUser,
+                    loginForm,
+                    loginLoading,
+                    loginFormRef,
+                    loginRules,
+                    handleLogin,
+                    handleLogout,
+                    passwordDialogVisible,
+                    passwordForm,
+                    passwordLoading,
+                    passwordFormRef,
+                    passwordRules,
+                    showChangePassword,
+                    handleChangePassword,
+                    activeTab,
+                    monitorView,
+                    loading,
+                    serverLoading,
+                    monitorData,
+                    servers,
+                    lastRefresh,
+                    autoRefresh,
+                    serverDialogVisible,
+                    isEdit,
+                    serverFormRef,
+                    saving,
+                    serverForm,
+                    serverRules,
+                    importDialogVisible,
+                    importLoading,
+                    selectedFile,
+                    uploadRef,
+                    historyDialogVisible,
+                    historyDays,
+                    chartRef,
+                    getStatusClass,
+                    getProgressColor,
+                    formatDate,
+                    refreshAll,
+                    loadServers,
+                    showAddDialog,
+                    showEditDialog,
+                    saveServer,
+                    confirmDelete,
+                    confirmDeleteServer,
+                    showImportDialog,
+                    handleFileChange,
+                    downloadTemplate,
+                    handleImport,
+                    exportExcel,
+                    showHistory,
+                    loadHistoryData,
+                    handleTabChange
+                };
+            }
+        });
+
+        // 注册图标
+        for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+            app.component(key, component);
+        }
+
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>
